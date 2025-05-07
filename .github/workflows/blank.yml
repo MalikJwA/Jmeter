@@ -1,0 +1,143 @@
+name: JMeter Test with Enhanced HTML Report
+
+on:
+  schedule:
+    - cron: '30 17 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-jmeter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Install JMeter with Custom Reporting
+      run: |
+        # Install JMeter
+        JMETER_VERSION=5.6.3
+        wget -q https://downloads.apache.org//jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz
+        tar -xzf apache-jmeter-${JMETER_VERSION}.tgz
+        mv apache-jmeter-${JMETER_VERSION} jmeter
+
+        # Install reporting plugins
+        wget -q -O jmeter/lib/ext/jmeter-plugins-manager-1.10.jar https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-manager/1.10/jmeter-plugins-manager-1.10.jar
+        wget -q -O jmeter/lib/cmdrunner-2.3.jar https://repo1.maven.org/maven2/kg/apc/cmdrunner/2.3/cmdrunner-2.3.jar
+        java -cp jmeter/lib/ext/jmeter-plugins-manager-1.10.jar org.jmeterplugins.repository.PluginManagerCMDInstaller
+        ./jmeter/bin/PluginsManagerCMD.sh install jpgc-graphs-basic=2.2,jpgc-graphs-additional=2.2,jpgc-cmd=2.2,jpgc-synthesis=2.2
+
+    - name: Run JMeter with Enhanced Reporting
+      run: |
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        ./jmeter/bin/jmeter -n \
+          -t ROBOT-FRAMEWORK_JMETER.jmx \
+          -l results_${TIMESTAMP}.jtl \
+          -j jmeter-execution_${TIMESTAMP}.log \
+          -Jjmeter.save.saveservice.output_format=xml \
+          -Jjmeter.save.saveservice.response_data=true \
+          -Jjmeter.save.saveservice.samplerData=true
+
+    - name: Generate Custom HTML Dashboard
+      run: |
+        TIMESTAMP=$(ls -t results_*.jtl | head -1 | cut -d_ -f2- | cut -d. -f1)
+        
+        # Generate enhanced HTML report
+        ./jmeter/bin/jmeter -g results_${TIMESTAMP}.jtl -o dashboard_${TIMESTAMP}
+        
+        # Add custom CSS and JS for better visualization
+        cat << 'EOF' > dashboard_${TIMESTAMP}/content/css/custom.css
+        .dashboard {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .panel-heading {
+            background-color: #2c3e50 !important;
+            color: white !important;
+        }
+        .success {
+            background-color: #2ecc71 !important;
+        }
+        .failure {
+            background-color: #e74c3c !important;
+        }
+        .chart-container {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        EOF
+
+        # Add custom branding
+        sed -i 's/<title>Apache JMeter Dashboard<\/title>/<title>Performance Report - ${{ github.repository }}<\/title>/' dashboard_${TIMESTAMP}/index.html
+
+    - name: Package and Upload Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: jmeter-dashboard-${{ github.run_id }}
+        path: |
+          dashboard_*/
+          results_*.jtl
+        retention-days: 7
+
+    - name: Generate Executive Summary
+      run: |
+        TIMESTAMP=$(ls -t results_*.jtl | head -1 | cut -d_ -f2- | cut -d. -f1)
+        
+        # Extract key metrics
+        TOTAL_REQUESTS=$(grep "summary =" jmeter-execution_${TIMESTAMP}.log | tail -1 | awk '{print $3}')
+        ERROR_RATE=$(grep "summary =" jmeter-execution_${TIMESTAMP}.log | tail -1 | awk '{print $11}' | tr -d '()%')
+        AVG_RESPONSE=$(grep "summary =" jmeter-execution_${TIMESTAMP}.log | tail -1 | awk '{print $9}')
+        
+        # Generate executive summary HTML
+        cat << EOF > dashboard_${TIMESTAMP}/executive-summary.html
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Executive Summary</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .summary-card { 
+                    background: white; 
+                    padding: 20px; 
+                    border-radius: 5px; 
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+                    margin-bottom: 20px;
+                }
+                .metric { 
+                    font-size: 24px; 
+                    font-weight: bold; 
+                    color: #2c3e50;
+                }
+                .good { color: #27ae60; }
+                .warning { color: #f39c12; }
+                .bad { color: #e74c3c; }
+            </style>
+        </head>
+        <body>
+            <h1>Performance Test Executive Summary</h1>
+            <div class="summary-card">
+                <h2>Test Overview</h2>
+                <p><strong>Test Scenario:</strong> ROBOT-FRAMEWORK_JMETER.jmx</p>
+                <p><strong>Execution Time:</strong> $(date)</p>
+            </div>
+            
+            <div class="summary-card">
+                <h2>Key Metrics</h2>
+                <div>
+                    <p>Total Requests: <span class="metric">$TOTAL_REQUESTS</span></p>
+                    <p>Average Response Time: <span class="metric">$AVG_RESPONSE ms</span></p>
+                    <p>Error Rate: <span class="metric $( [ $(echo "$ERROR_RATE > 5" | bc) -eq 1 ] && echo "bad" || echo "good" )">$ERROR_RATE%</span></p>
+                </div>
+            </div>
+            
+            <a href="index.html">View Full Dashboard</a>
+        </body>
+        </html>
+        EOF
