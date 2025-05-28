@@ -29,7 +29,7 @@ jobs:
         ls -l jmeter/bin/jmeter  # Vérification
     - name: Run JMeter Test with Logs
       run: |
-        ./jmeter/bin/jmeter/LOYALTY -n \
+        ./jmeter/bin/jmeter -n \
           -t FRANCE_2025-2026_V1.jmx \
           -l results.jtl \
           -j jmeter-execution.log \
