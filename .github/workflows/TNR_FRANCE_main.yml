@@ -30,7 +30,7 @@ jobs:
     - name: Run JMeter Test with Logs
       run: |
         ./jmeter/bin/jmeter -n \
-          -t FRANCE_2025-2026_V1.jmx \
+          -t LOYALTY/FRANCE_2025-2026_V1.jmx \
           -l results.jtl \
           -j jmeter-execution.log \
           -Jxstream.disable=true \
